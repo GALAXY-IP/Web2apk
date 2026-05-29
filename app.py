@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# AXKA BUILDER - Setup Menu CLI (Cross-platform)
+# AXKA BUILDER - Setup Menu CLI (Cross-platform, non-interactive safe)
 
 import os
 import sys
@@ -18,6 +18,7 @@ PID_FILE = os.path.join(DATA_DIR, 'server.pid')
 
 os.makedirs(DATA_DIR, exist_ok=True)
 
+# ================== UTILITIES ==================
 def load_config():
     try:
         with open(CONFIG_FILE, 'r') as f:
@@ -37,11 +38,23 @@ def save_config(cfg):
 def clear():
     os.system('cls' if os.name == 'nt' else 'clear')
 
+def safe_input(prompt):
+    """Membaca input dengan penanganan EOFError dan non-interaktif."""
+    if not sys.stdin.isatty():
+        # Mode non-interaktif: tidak bisa membaca input
+        print(f"{prompt} (non-interactive mode, using default/empty)")
+        return ''
+    try:
+        return input(prompt)
+    except EOFError:
+        print("\n[ERROR] Tidak ada input tersedia (EOF). Program berhenti.")
+        sys.exit(1)
+
 def pause():
-    input('\nTekan Enter untuk kembali...')
+    if sys.stdin.isatty():
+        safe_input('\nTekan Enter untuk kembali...')
 
 def is_tool_available(name):
-    """Cek apakah perintah (npm/node) tersedia di PATH"""
     try:
         subprocess.run([name, '--version'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         return True
@@ -49,7 +62,6 @@ def is_tool_available(name):
         return False
 
 def create_env_safely():
-    """Buat .env jika belum ada, atau isi variabel yang hilang"""
     defaults = {
         'PORT': '3000',
         'NODE_ENV': 'production',
@@ -74,7 +86,6 @@ def create_env_safely():
         print('\n✅ File .env baru dibuat')
         return
     
-    # Baca existing .env
     existing = {}
     with open(ENV_FILE, 'r') as f:
         for line in f:
@@ -83,7 +94,6 @@ def create_env_safely():
                 k, v = line.split('=', 1)
                 existing[k] = v
     
-    # Tambahkan yang belum ada
     added = False
     with open(ENV_FILE, 'a') as f:
         for key, val in defaults.items():
@@ -94,13 +104,11 @@ def create_env_safely():
         print('\n✅ Variabel tambahan ditambahkan ke .env')
 
 def stop_server_by_port(port=3000):
-    """Hentikan proses yang menggunakan port tertentu (cross-platform)"""
     system = platform.system()
     pid = None
     
     try:
         if system == "Windows":
-            # Cari PID dengan netstat
             result = subprocess.run(f'netstat -ano | findstr :{port}', shell=True, capture_output=True, text=True)
             for line in result.stdout.splitlines():
                 if 'LISTENING' in line:
@@ -111,19 +119,15 @@ def stop_server_by_port(port=3000):
                 subprocess.run(f'taskkill /F /PID {pid}', shell=True, capture_output=True)
                 print(f"✅ Proses dengan PID {pid} telah dihentikan")
                 return True
-        else:  # Linux/macOS
-            # Coba lsof terlebih dahulu
+        else:
             result = subprocess.run(f'lsof -ti :{port}', shell=True, capture_output=True, text=True)
             if result.stdout.strip():
                 pid = result.stdout.strip()
                 subprocess.run(f'kill -9 {pid}', shell=True)
                 print(f"✅ Proses dengan PID {pid} telah dihentikan")
                 return True
-            # Alternatif menggunakan ss atau netstat
             result = subprocess.run(f'ss -lptn | grep ":{port}"', shell=True, capture_output=True, text=True)
             if result.stdout:
-                # Ekstrak PID dari output ss (format: users:(("node",pid=1234,fd=...))
-                import re
                 match = re.search(r'pid=(\d+)', result.stdout)
                 if match:
                     pid = match.group(1)
@@ -134,7 +138,6 @@ def stop_server_by_port(port=3000):
         print(f"❌ Gagal menghentikan server: {e}")
         return False
     
-    # Coba PID file
     if os.path.exists(PID_FILE):
         try:
             with open(PID_FILE, 'r') as f:
@@ -153,10 +156,9 @@ def stop_server_by_port(port=3000):
     return False
 
 def start_server_background():
-    """Jalankan server di background dan simpan PID"""
     if os.path.exists(PID_FILE):
         print("⚠️  Server mungkin sudah berjalan (file PID ada).")
-        choice = input("Apakah tetap ingin menjalankan ulang? (y/n): ")
+        choice = safe_input("Apakah tetap ingin menjalankan ulang? (y/n): ")
         if choice.lower() != 'y':
             return False
         try:
@@ -173,7 +175,7 @@ def start_server_background():
             cwd=BASE_DIR,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
-            start_new_session=True  # detach
+            start_new_session=True
         )
         with open(PID_FILE, 'w') as f:
             f.write(str(proc.pid))
@@ -184,6 +186,7 @@ def start_server_background():
         print(f"❌ Gagal menjalankan server: {e}")
         return False
 
+# ================== MENU (dengan proteksi EOF) ==================
 def menu():
     while True:
         clear()
@@ -201,7 +204,7 @@ def menu():
 7. Stop Website
 8. Keluar
 """)
-        pilih = input('Pilih menu : ').strip()
+        pilih = safe_input('Pilih menu : ').strip()
         
         if pilih == '1':
             install_and_run()
@@ -229,7 +232,6 @@ def install_and_run():
     clear()
     print('=== Install Website AXKA Builder ===\n')
     
-    # Validasi toolchain
     if not is_tool_available('npm'):
         print("❌ npm tidak ditemukan. Pastikan Node.js dan npm sudah terinstal.")
         pause()
@@ -240,20 +242,23 @@ def install_and_run():
         return
     
     while True:
-        domain = input('[ • ] Domain (contoh: yourdomain.com) : ').strip()
+        domain = safe_input('[ • ] Domain (contoh: yourdomain.com) : ').strip()
         if domain and re.match(r'^[a-zA-Z0-9.-]+$', domain):
+            break
+        if not domain:
+            domain = 'localhost'
             break
         print("   Domain tidak valid. Gunakan huruf, angka, titik, atau strip.")
     
-    admin = input('[ • ] Username Admin                   : ').strip()
-    while not admin:
-        admin = input('   Username tidak boleh kosong : ').strip()
+    admin = safe_input('[ • ] Username Admin                   : ').strip()
+    if not admin:
+        admin = 'AXKA'
     
-    password = input('[ • ] Password Admin                   : ').strip()
-    while not password:
-        password = input('   Password tidak boleh kosong : ').strip()
+    password = safe_input('[ • ] Password Admin                   : ').strip()
+    if not password:
+        password = 'Asiafone11'
     
-    email = input('[ • ] Email Admin                      : ').strip()
+    email = safe_input('[ • ] Email Admin                      : ').strip()
     if not email:
         email = 'admin@axkabuilder.com'
     
@@ -268,7 +273,7 @@ def install_and_run():
 ╚══════════════════════════════════════╝
 """)
     
-    confirm = input('Yakin menginstal? (y/n) : ').strip().lower()
+    confirm = safe_input('Yakin menginstal? (y/n) : ').strip().lower()
     if confirm != 'y':
         return
     
@@ -295,7 +300,6 @@ Silakan jalankan server dari menu utama.
     pause()
 
 def start_server_foreground():
-    """Jalankan server dengan mengganti proses (seperti asli)"""
     print('\n🚀 Menjalankan server Node.js (foreground)...')
     print('   Tekan Ctrl+C untuk menghentikan server.\n')
     try:
@@ -307,7 +311,7 @@ def start_server_foreground():
 def change_domain():
     cfg = load_config()
     print(f'\nDomain saat ini: {cfg.get("domain", "-")}')
-    new_domain = input('[ • ] Domain baru : ').strip()
+    new_domain = safe_input('[ • ] Domain baru : ').strip()
     if new_domain:
         cfg['domain'] = new_domain
         save_config(cfg)
@@ -318,8 +322,8 @@ def change_domain():
 
 def change_admin():
     cfg = load_config()
-    new_admin = input(f'[ • ] Username Admin baru ({cfg.get("admin", "")}) : ').strip()
-    new_password = input('[ • ] Password Admin baru              : ').strip()
+    new_admin = safe_input(f'[ • ] Username Admin baru ({cfg.get("admin", "")}) : ').strip()
+    new_password = safe_input('[ • ] Password Admin baru              : ').strip()
     if new_admin:
         cfg['admin'] = new_admin
     if new_password:
@@ -341,7 +345,7 @@ def fix_deps():
     pause()
 
 def stop_website():
-    confirm = input('Yakin ingin mematikan server? (y/n) : ').strip().lower()
+    confirm = safe_input('Yakin ingin mematikan server? (y/n) : ').strip().lower()
     if confirm == 'y':
         if stop_server_by_port(3000):
             print('Server berhasil dihentikan.')
@@ -356,6 +360,7 @@ def stop_website():
     else:
         print('Dibatalkan.')
 
+# ================== MAIN ==================
 if __name__ == '__main__':
     if not os.path.exists(CONFIG_FILE):
         save_config({
@@ -364,4 +369,12 @@ if __name__ == '__main__':
             'password': 'Asiafone11',
             'email': 'admin@axkabuilder.com'
         })
+    
+    # Jika dijalankan dalam mode non-interaktif (misal build process), 
+    # kita bisa langsung menjalankan server background dan keluar.
+    if not sys.stdin.isatty():
+        print("Menjalankan dalam mode non-interaktif. Memulai server background...")
+        start_server_background()
+        sys.exit(0)
+    
     menu()
